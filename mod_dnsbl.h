@@ -1,3 +1,4 @@
+/* mod_dnsbl.h.  Generated from mod_dnsbl.h.in by configure.  */
 /*
  * ProFTPD: mod_dnsbl -- a module for checking DNSBL (DNS Black Lists)
  *                       servers before allowing a connection
@@ -32,6 +33,6 @@
 #include "conf.h"
 #include "privs.h"
 
-#define MOD_DNSBL_VERSION                       "mod_dnsbl/0.1.5-zooku"
+#define MOD_DNSBL_VERSION                       "mod_dnsbl/0.1.5-xxmitsu"
 
 #endif /* MOD_DNSBL_H */

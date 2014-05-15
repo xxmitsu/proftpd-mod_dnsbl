@@ -26,7 +26,7 @@
  * This is mod_dnsbl, contrib software for proftpd 1.3.x and above.
  * For more information contact TJ Saunders <tj@castaglia.org>.
  *
- * $Id: mod_dnsbl.c,v 1.6 2009/05/25 16:57:53 tj Exp tj $
+ * $Id: mod_dnsbl.c,v 1.2 2013/10/13 16:48:08 castaglia Exp $
  */
 
 #include "mod_dnsbl.h"
@@ -52,6 +52,7 @@ typedef enum {
   DNSBL_POLICY_DENY_ALLOW
 
 } dnsbl_policy_e;
+
 
 static const char *reverse_ip_addr(pool *p, const char *ip_addr) {
   char *addr2, *res, *tmp;
@@ -114,7 +115,8 @@ static const char *get_reversed_addr(pool *p) {
   return reverse_ip_addr(p, ipstr);
 }
 
-static void lookup_reason(pool *p, const char *name) {
+/*
+const char * lookup_reason(pool *p, const char *name) {
   int reasonlen;
   unsigned char reason[NS_PACKETSZ];
 
@@ -123,9 +125,6 @@ static void lookup_reason(pool *p, const char *name) {
     ns_msg handle;
     int rrno;
 
-    /* Now we get the unenviable task of hand-parsing the response record,
-     * trying to get at the actual text message contained within.
-     */
 
     if (ns_initparse(reason, reasonlen, &handle) < 0) {
       (void) pr_log_writefile(dnsbl_logfd, MOD_DNSBL_VERSION,
@@ -157,6 +156,8 @@ static void lookup_reason(pool *p, const char *name) {
 
   return;
 }
+*/
+
 
 static int lookup_addr(pool *p, const char *addr, const char *domain) {
   pr_netaddr_t *reject_addr = NULL;
@@ -174,7 +175,8 @@ static int lookup_addr(pool *p, const char *addr, const char *domain) {
     /* Check for TXT record for this DNS name, to see if the reason for
      * blacklisting has been configured.
      */
-    lookup_reason(p, name);
+    // xxmitsu
+    //lookup_reason(p, name);
     return -1;
   }
 
@@ -286,27 +288,28 @@ static int dnsbl_sess_init(void) {
   c = find_config(main_server->conf, CONF_PARAM, "DNSBLLog", FALSE);
   if (c &&
       strcasecmp(c->argv[0], "none") != 0) {
-    int res;
+    int res, xerrno = 0;
 
     PRIVS_ROOT
     res = pr_log_openfile(c->argv[0], &dnsbl_logfd, 0600);
+    xerrno = errno;
     PRIVS_RELINQUISH
 
     switch (res) {
       case -1:
         pr_log_pri(PR_LOG_NOTICE, MOD_DNSBL_VERSION
           ": notice: unable to open DNSBLLog '%s': %s", (char *) c->argv[0],
-          strerror(errno));
+          strerror(xerrno));
         break;
 
       case PR_LOG_WRITABLE_DIR:
-        pr_log_pri(PR_LOG_NOTICE, MOD_DNSBL_VERSION
+        pr_log_pri(PR_LOG_WARNING, MOD_DNSBL_VERSION
           ": notice: unable to use DNSBLLog '%s': parent directory is "
             "world-writable", (char *) c->argv[0]);
         break;
 
       case PR_LOG_SYMLINK:
-        pr_log_pri(PR_LOG_NOTICE, MOD_DNSBL_VERSION
+        pr_log_pri(PR_LOG_WARNING, MOD_DNSBL_VERSION
           ": notice: unable to use DNSBLLog '%s': cannot log to a symlink",
           (char *) c->argv[0]);
         break;
@@ -347,6 +350,7 @@ static int dnsbl_sess_init(void) {
      * client is listed by any of the DNSBLDomain sites.
      */
     case DNSBL_POLICY_ALLOW_DENY: {
+
       c = find_config(main_server->conf, CONF_PARAM, "DNSBLDomain", FALSE);
       while (c) {
         const char *domain;
@@ -359,6 +363,62 @@ static int dnsbl_sess_init(void) {
           (void) pr_log_writefile(dnsbl_logfd, MOD_DNSBL_VERSION,
             "client address '%s' is listed by DNSBLDomain '%s', rejecting "
             "connection", pr_netaddr_get_ipstr(session.c->remote_addr), domain);
+          
+
+          int reasonlen;
+          unsigned char reason[NS_PACKETSZ];
+
+          const char *name = pstrcat(tmp_pool, rev_ip_addr, ".", domain, NULL);
+
+          reasonlen = res_query(name, ns_c_in, ns_t_txt, reason, sizeof(reason));
+          if (reasonlen > 0) {
+            ns_msg handle;
+            int rrno;
+
+            /* Now we get the unenviable task of hand-parsing the response record,
+         *      * trying to get at the actual text message contained within.
+         *           */
+
+            if (ns_initparse(reason, reasonlen, &handle) < 0) {
+              (void) pr_log_writefile(dnsbl_logfd, MOD_DNSBL_VERSION,
+                "error initialising nameserver response parser: %s", strerror(errno));
+              pr_response_send_async(R_550,
+                _("Your IP address '%s' is known for distributing viruses (listed in '%s'). Rejecting connection !"),
+                pr_netaddr_get_ipstr(session.c->remote_addr), domain);
+                continue;
+            }
+
+
+            for (rrno = 0; rrno < ns_msg_count(handle, ns_s_an); rrno++) {
+              ns_rr rr;
+
+              if (ns_parserr(&handle, ns_s_an, rrno, &rr) < 0) {
+                (void) pr_log_writefile(dnsbl_logfd, MOD_DNSBL_VERSION,
+                  "error parsing resource record %d: %s", rrno, strerror(errno));
+                continue;
+              }
+
+              if (ns_rr_type(rr) == ns_t_txt) {
+                char *reject_reason;
+                size_t len = ns_rr_rdlen(rr);
+
+                reject_reason = pcalloc(tmp_pool, len+1);
+                memcpy(reject_reason, (unsigned char *) ns_rr_rdata(rr), len);
+
+                (void) pr_log_writefile(dnsbl_logfd, MOD_DNSBL_VERSION,
+                 "reason for blacklisting client address: '%s'", reject_reason);
+                  pr_response_send_async(R_550,
+                    _("Your IP address '%s' is known for viruses (listed in '%s'). Rejecting connection !, RBL details: '%s'"),
+                    pr_netaddr_get_ipstr(session.c->remote_addr), domain, reject_reason);
+              }
+            }
+          }
+          else { //reasonlen < 0
+            pr_response_send_async(R_550,
+              _("Your IP address '%s' is known for distributing viruses (listed in '%s'). Rejecting connection !"),
+              pr_netaddr_get_ipstr(session.c->remote_addr), domain);
+          }
+
           reject_conn = TRUE;
           break;
         }

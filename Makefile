@@ -1,6 +1,6 @@
 top_builddir=../..
 top_srcdir=../../
-srcdir=@srcdir@
+srcdir=.
 
 include $(top_srcdir)/Make.rules
 
@@ -8,18 +8,18 @@ include $(top_srcdir)/Make.rules
 
 SHARED_CFLAGS=-DPR_SHARED_MODULE
 SHARED_LDFLAGS=-avoid-version -export-dynamic -module
-VPATH=@srcdir@
+
 
 MODULE_NAME=mod_dnsbl
 MODULE_OBJS=mod_dnsbl.o
 SHARED_MODULE_OBJS=mod_dnsbl.lo
 
-MODULE_LIBS=@MODULE_LIBS@
+MODULE_LIBS=-lresolv
 
 # Necessary redefinitions
-INCLUDES=-I. -I../.. -I../../include @INCLUDES@
+INCLUDES=-I. -I../.. -I../../include -I/usr/include/openssl
 CPPFLAGS= $(ADDL_CPPFLAGS) -DHAVE_CONFIG_H $(DEFAULT_PATHS) $(PLATFORM) $(INCLUDES)
-LDFLAGS=-L../../lib @LDFLAGS@
+LDFLAGS=-L../../lib -lz -lbz2 -larchive -L/usr/lib/openssl
 
 .c.o:
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $<
